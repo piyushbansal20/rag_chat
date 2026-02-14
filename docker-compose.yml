@@ -1,0 +1,146 @@
+services:
+  # Frontend - React with Nginx
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    networks:
+      - app-network
+
+  # Backend - Node.js/Express
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - MONGODB_URI=mongodb://mongo:27017/knowledge_base
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+      - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET:-your-super-secret-access-key-min-32-characters-long}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-your-super-secret-refresh-key-min-32-characters-long}
+      - JWT_ACCESS_EXPIRES_IN=15m
+      - JWT_REFRESH_EXPIRES_IN=7d
+      - ALLOWED_ORIGINS=http://localhost:5173
+      - MAX_FILE_SIZE_MB=50
+      - UPLOAD_DIR=/app/uploads
+      - VOYAGE_API_KEY=${VOYAGE_API_KEY}
+      - VOYAGE_RERANK_MODEL=rerank-2
+      - VOYAGE_ENABLE_RERANKING=true
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - CHROMA_HOST=http://chromadb:8000
+      - RATE_LIMIT_WINDOW_MS=60000
+      - RATE_LIMIT_MAX_REQUESTS=60
+      - LOG_LEVEL=info
+    volumes:
+      - backend-uploads:/app/uploads
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # Background Worker
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: npm run worker
+    environment:
+      - NODE_ENV=production
+      - MONGODB_URI=mongodb://mongo:27017/knowledge_base
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+      - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET:-your-super-secret-access-key-min-32-characters-long}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-your-super-secret-refresh-key-min-32-characters-long}
+      - VOYAGE_API_KEY=${VOYAGE_API_KEY}
+      - VOYAGE_RERANK_MODEL=rerank-2
+      - VOYAGE_ENABLE_RERANKING=true
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - CHROMA_HOST=http://chromadb:8000
+      - UPLOAD_DIR=/app/uploads
+      - LOG_LEVEL=info
+    volumes:
+      - backend-uploads:/app/uploads
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # MongoDB
+  mongo:
+    image: mongo:7
+    command: mongod --quiet --bind_ip_all
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # ChromaDB - Vector Database
+  chromadb:
+    image: chromadb/chroma:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma-data:/chroma/.chroma
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+    networks:
+      - app-network
+    restart: unless-stopped
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  mongo-data:
+  redis-data:
+  chroma-data:
+  backend-uploads:
